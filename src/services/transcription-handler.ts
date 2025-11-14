@@ -46,11 +46,13 @@ export class TranscriptionHandler extends EventEmitter {
 
       case 'bot.transcription.partial':
       case 'transcript.partial':
+      case 'transcript.partial_data':
         this.handlePartialTranscript(bot_id, data);
         break;
 
       case 'bot.transcription.final':
       case 'transcript.final':
+      case 'transcript.data':
         this.handleFinalTranscript(bot_id, data);
         break;
 
@@ -86,8 +88,15 @@ export class TranscriptionHandler extends EventEmitter {
     const text = this.extractTextFromData(data);
     if (!text) return;
 
+    // Extract speaker name from various possible locations
+    const speaker = data.speaker ||
+                   data.speaker_id ||
+                   data.participant?.name ||
+                   data.participant?.id?.toString() ||
+                   'Unknown';
+
     const segment: TranscriptionSegment = {
-      speaker: data.speaker || data.speaker_id || 'Unknown',
+      speaker,
       text,
       timestamp: Date.now(),
       confidence: data.confidence
@@ -101,8 +110,15 @@ export class TranscriptionHandler extends EventEmitter {
     const text = this.extractTextFromData(data);
     if (!text) return;
 
+    // Extract speaker name from various possible locations
+    const speaker = data.speaker ||
+                   data.speaker_id ||
+                   data.participant?.name ||
+                   data.participant?.id?.toString() ||
+                   'Unknown';
+
     const segment: TranscriptionSegment = {
-      speaker: data.speaker || data.speaker_id || 'Unknown',
+      speaker,
       text,
       timestamp: Date.now(),
       confidence: data.confidence

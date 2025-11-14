@@ -51,13 +51,22 @@ export class MeetingAgent extends EventEmitter {
       this.generateFinalSummary(event.botId);
     });
 
-    this.transcriptionHandler.on('final_transcript', (event) => {
+    this.transcriptionHandler.on('final_transcript', async (event) => {
       this.emit('transcript', {
         botId: event.botId,
         speaker: event.segment.speaker,
         text: event.segment.text,
         timestamp: event.segment.timestamp
       });
+
+      // Echo transcript to meeting chat
+      try {
+        const message = `[${event.segment.speaker}]: ${event.segment.text}`;
+        await this.sendMessage(event.botId, message);
+        console.log(`Echoed to chat: ${message}`);
+      } catch (error) {
+        console.error('Failed to echo transcript to chat:', error);
+      }
     });
 
   }

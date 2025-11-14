@@ -42,7 +42,25 @@ meetingAgent.on('meeting_summary', (data) => {
 
 app.post('/webhook', (req, res) => {
   try {
-    meetingAgent.processWebhookEvent(req.body);
+    console.log('Webhook received:', JSON.stringify(req.body, null, 2));
+
+    // Normalize webhook payload structure
+    // Handle nested structure: req.body.data.bot.id and req.body.data.data
+    const botId = req.body.bot_id ||
+                  req.body.bot?.id ||
+                  req.body.data?.bot?.id;
+
+    const eventData = req.body.data?.data || req.body.data || req.body;
+
+    const payload = {
+      event: req.body.event || 'transcript.data',
+      bot_id: botId,
+      data: eventData
+    };
+
+    console.log('Normalized payload:', JSON.stringify(payload, null, 2));
+
+    meetingAgent.processWebhookEvent(payload);
     res.status(200).send('OK');
   } catch (error) {
     console.error('Webhook processing error:', error);
