@@ -1,6 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
 import { EventEmitter } from 'events';
-import WebSocket from 'ws';
 
 export interface BotConfig {
   meetingUrl: string;
@@ -18,9 +17,6 @@ export interface Bot {
   status: string;
   created_at: string;
   updated_at: string;
-  real_time_transcription?: {
-    websocket_url?: string;
-  };
 }
 
 export interface Transcript {
@@ -36,12 +32,10 @@ export interface Transcript {
 export class RecallClient extends EventEmitter {
   private client: AxiosInstance;
   private apiKey: string;
-  private webSockets: Map<string, WebSocket>;
 
   constructor(apiKey: string) {
     super();
     this.apiKey = apiKey;
-    this.webSockets = new Map();
     this.client = axios.create({
       baseURL: 'https://us-west-2.recall.ai/api/v1',
       headers: {
@@ -59,14 +53,20 @@ export class RecallClient extends EventEmitter {
         recording_config: {
           transcript: {
             provider: {
-              recallai_streaming: {}
+              // meeting_captions: {
+              //   language_code: "ja"
+              // }
+              recallai_streaming: {
+                mode: 'prioritize_low_latency',
+                language_code: 'en',
+              }
             }
           },
           realtime_endpoints: [
             {
               type: 'webhook',
               url: config.webhookUrl,
-              events: ['transcript.data', 'transcript.partial_data']
+              events: ['transcript.data']
             }
           ]
         }
@@ -127,67 +127,5 @@ export class RecallClient extends EventEmitter {
       console.error('Error sending chat message:', error.response?.data || error.message);
       throw error;
     }
-  }
-
-  async connectToStream(botId: string): Promise<void> {
-    try {
-      // Get bot info to retrieve WebSocket URL
-      const bot = await this.getBot(botId);
-      const wsUrl = bot.real_time_transcription?.websocket_url;
-
-      if (!wsUrl) {
-        console.error('No WebSocket URL available for bot:', botId);
-        throw new Error('WebSocket URL not available. Bot may not be ready yet.');
-      }
-
-      console.log(`Connecting to streaming endpoint for bot ${botId}:`, wsUrl);
-
-      const ws = new WebSocket(wsUrl);
-
-      ws.on('open', () => {
-        console.log(`WebSocket connected for bot ${botId}`);
-        this.emit('stream_connected', { botId });
-      });
-
-      ws.on('message', (data: WebSocket.Data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          console.log(`Received streaming data for bot ${botId}:`, message);
-          this.emit('stream_data', { botId, data: message });
-        } catch (error: any) {
-          console.error('Error parsing WebSocket message:', error);
-        }
-      });
-
-      ws.on('error', (error: Error) => {
-        console.error(`WebSocket error for bot ${botId}:`, error);
-        this.emit('stream_error', { botId, error });
-      });
-
-      ws.on('close', () => {
-        console.log(`WebSocket closed for bot ${botId}`);
-        this.webSockets.delete(botId);
-        this.emit('stream_disconnected', { botId });
-      });
-
-      this.webSockets.set(botId, ws);
-    } catch (error: any) {
-      console.error('Error connecting to stream:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  disconnectFromStream(botId: string): void {
-    const ws = this.webSockets.get(botId);
-    if (ws) {
-      ws.close();
-      this.webSockets.delete(botId);
-      console.log(`Disconnected from stream for bot ${botId}`);
-    }
-  }
-
-  isStreamConnected(botId: string): boolean {
-    const ws = this.webSockets.get(botId);
-    return ws !== undefined && ws.readyState === WebSocket.OPEN;
   }
 }

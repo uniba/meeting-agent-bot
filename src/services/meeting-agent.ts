@@ -60,22 +60,6 @@ export class MeetingAgent extends EventEmitter {
       });
     });
 
-    // Recall client streaming events
-    this.recallClient.on('stream_connected', async (event) => {
-      console.log(`Streaming connected for bot ${event.botId}`);
-    });
-
-    this.recallClient.on('stream_data', (event) => {
-      this.handleStreamingData(event.botId, event.data);
-    });
-
-    this.recallClient.on('stream_error', (event) => {
-      console.error(`Streaming error for bot ${event.botId}:`, event.error);
-    });
-
-    this.recallClient.on('stream_disconnected', (event) => {
-      console.log(`Streaming disconnected for bot ${event.botId}`);
-    });
   }
 
   async joinMeeting(meetingUrl: string, botName?: string): Promise<string> {
@@ -91,24 +75,7 @@ export class MeetingAgent extends EventEmitter {
 
       this.activeBots.set(bot.id, bot);
       console.log(`Bot created with ID: ${bot.id}`);
-
-      // Wait a bit for the bot to initialize, then connect to streaming
-      setTimeout(async () => {
-        try {
-          await this.recallClient.connectToStream(bot.id);
-          console.log(`Connected to streaming for bot ${bot.id}`);
-        } catch (error) {
-          console.error('Failed to connect to streaming:', error);
-          // Retry after a delay
-          setTimeout(async () => {
-            try {
-              await this.recallClient.connectToStream(bot.id);
-            } catch (retryError) {
-              console.error('Retry failed to connect to streaming:', retryError);
-            }
-          }, 5000);
-        }
-      }, 3000);
+      console.log(`Transcripts will be received via webhook: ${this.config.webhookUrl}`);
 
       return bot.id;
     } catch (error) {
@@ -119,31 +86,12 @@ export class MeetingAgent extends EventEmitter {
 
   async leaveMeeting(botId: string): Promise<void> {
     try {
-      // Disconnect from streaming first
-      this.recallClient.disconnectFromStream(botId);
-
       await this.recallClient.deleteBot(botId);
       this.activeBots.delete(botId);
       this.stopSummaryTimer(botId);
     } catch (error) {
       console.error('Failed to leave meeting:', error);
       throw error;
-    }
-  }
-
-  private handleStreamingData(botId: string, data: any): void {
-    // Handle different types of streaming data
-    if (data.type === 'transcript' || data.transcript) {
-      const transcriptData = data.transcript || data;
-
-      // Process as webhook-style event for compatibility
-      this.transcriptionHandler.processWebhookEvent({
-        event: transcriptData.is_final ? 'bot.transcription.final' : 'bot.transcription.partial',
-        bot_id: botId,
-        data: transcriptData
-      });
-    } else {
-      console.log(`Received other streaming data for bot ${botId}:`, data);
     }
   }
 
