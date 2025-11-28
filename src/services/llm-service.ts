@@ -40,7 +40,7 @@ export class LLMService {
       const userPrompt = this.buildUserPrompt(context);
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           ...this.conversationHistory.slice(-10) as any,
@@ -97,7 +97,7 @@ Provide an appropriate response based on what was said. If a question was asked,
   async generateMeetingSummary(transcriptHistory: string): Promise<string> {
     try {
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -130,7 +130,7 @@ Format the summary with:
   async detectActionItems(transcript: string): Promise<string[]> {
     try {
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -160,5 +160,107 @@ Format the summary with:
 
   clearHistory(): void {
     this.conversationHistory = [];
+  }
+
+  async generateFacilitatorResponse(
+    speaker: string,
+    text: string,
+    recentTranscripts: string
+  ): Promise<{ shouldRespond: boolean; response: string }> {
+    try {
+      // First, determine if we should respond
+      const shouldRespondCompletion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a meeting facilitator AI. Analyze if the following statement requires a facilitator response.
+Respond with JSON: {"should_respond": true/false, "reason": "brief reason"}
+
+Respond when:
+- A question is asked
+- Important decisions or action items are mentioned
+- Clarification is needed
+- The discussion needs guidance or summary
+- Someone is asking for help or input
+
+Don't respond to:
+- Simple acknowledgments or greetings
+- Ongoing discussions that don't need intervention
+- Technical side conversations`
+          },
+          {
+            role: 'user',
+            content: `Speaker: ${speaker}
+Statement: "${text}"
+
+Recent context:
+${recentTranscripts}`
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 100
+      });
+
+      const decision = JSON.parse(shouldRespondCompletion.choices[0].message.content || '{"should_respond": false}');
+
+      if (!decision.should_respond) {
+        return { shouldRespond: false, response: '' };
+      }
+
+      // Generate the actual response
+      const systemPrompt = `You are ${this.persona.name}, an AI meeting facilitator.
+Personality: ${this.persona.personality}
+
+Your role:
+- Facilitate productive discussions
+- Ask clarifying questions
+- Summarize key points
+- Highlight action items
+- Keep the meeting on track
+- Be supportive and professional
+
+Guidelines:
+- Keep responses concise (1-2 sentences)
+- Use Japanese when the conversation is in Japanese
+- Be helpful but not intrusive
+- Focus on moving the discussion forward`;
+
+      const responseCompletion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...this.conversationHistory.slice(-10) as any,
+          {
+            role: 'user',
+            content: `Recent conversation:
+${recentTranscripts}
+
+${speaker} just said: "${text}"
+
+Provide a brief, helpful facilitator response.`
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 150
+      });
+
+      const response = responseCompletion.choices[0].message.content || '';
+
+      // Update conversation history
+      this.conversationHistory.push({
+        role: 'user',
+        content: `${speaker}: ${text}`
+      });
+      this.conversationHistory.push({
+        role: 'assistant',
+        content: response
+      });
+
+      return { shouldRespond: true, response };
+    } catch (error) {
+      console.error('Error generating facilitator response:', error);
+      return { shouldRespond: false, response: '' };
+    }
   }
 }

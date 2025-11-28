@@ -59,13 +59,31 @@ export class MeetingAgent extends EventEmitter {
         timestamp: event.segment.timestamp
       });
 
-      // Echo transcript to meeting chat
+      // Generate AI facilitator response
       try {
-        const message = `[${event.segment.speaker}]: ${event.segment.text}`;
-        await this.sendMessage(event.botId, message);
-        console.log(`Echoed to chat: ${message}`);
+        // Get recent conversation context
+        const history = this.transcriptionHandler.getTranscriptionHistory(event.botId);
+        const recentTranscripts = history
+          .slice(-5)
+          .map(seg => `${seg.speaker}: ${seg.text}`)
+          .join('\n');
+
+        // Ask LLM if we should respond and generate response
+        const { shouldRespond, response } = await this.llmService.generateFacilitatorResponse(
+          event.segment.speaker,
+          event.segment.text,
+          recentTranscripts
+        );
+
+        if (shouldRespond && response) {
+          await this.sendMessage(event.botId, response);
+          console.log(`AI Facilitator response: ${response}`);
+          this.emit('message_sent', { botId: event.botId, message: response });
+        } else {
+          console.log(`No facilitator response needed for: [${event.segment.speaker}]: ${event.segment.text}`);
+        }
       } catch (error) {
-        console.error('Failed to echo transcript to chat:', error);
+        console.error('Failed to generate facilitator response:', error);
       }
     });
 
