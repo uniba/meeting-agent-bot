@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Bot Speaker</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      text-align: center;
+      max-width: 800px;
+    }
+    .status {
+      font-size: 24px;
+      margin-bottom: 20px;
+      font-weight: bold;
+    }
+    .message {
+      font-size: 20px;
+      font-weight: bold;
+      min-height: 40px;
+      padding: 15px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      margin-top: 15px;
+    }
+    .debug {
+      font-size: 16px;
+      margin-top: 20px;
+      padding: 15px;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 5px;
+      text-align: left;
+      font-family: monospace;
+      max-height: 400px;
+      overflow-y: auto;
+      line-height: 1.6;
+    }
+    .debug-line {
+      margin: 4px 0;
+    }
+    .speaking {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="status" id="status">AI Meeting Assistant</div>
+    <div class="message" id="message">Listening...</div>
+    <div class="debug" id="debug"></div>
+  </div>
+
+  <script>
+    // Get botId from URL hash (e.g., #botId123) or query parameter
+    let botId = window.location.hash.substring(1); // Remove the # character
+    if (!botId) {
+      botId = new URLSearchParams(window.location.search).get('botId');
+    }
+    const serverUrl = new URLSearchParams(window.location.search).get('server') || 'http://localhost:3333';
+
+    console.log('Bot ID:', botId);
+    console.log('Server URL:', serverUrl);
+
+    const status = document.getElementById('status');
+    const message = document.getElementById('message');
+    const debugDiv = document.getElementById('debug');
+
+    // Debug logging
+    function addDebug(msg) {
+      const timestamp = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.className = 'debug-line';
+      line.textContent = `[${timestamp}] ${msg}`;
+      debugDiv.appendChild(line);
+      debugDiv.scrollTop = debugDiv.scrollHeight;
+      console.log(msg);
+    }
+
+    addDebug(`Bot ID: ${botId}`);
+    addDebug(`Server URL: ${serverUrl}`);
+
+    let synth = window.speechSynthesis;
+    let currentUtterance = null;
+
+    function speak(text, lang = 'en-US') {
+      addDebug(`speak() called with: "${text.substring(0, 50)}..."`);
+
+      // Cancel any ongoing speech
+      if (synth.speaking) {
+        addDebug('Cancelling ongoing speech');
+        synth.cancel();
+      }
+
+      // Detect if text is Japanese
+      const isJapanese = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text);
+      const voiceLang = isJapanese ? 'ja-JP' : 'en-US';
+      addDebug(`Detected language: ${voiceLang}`);
+
+      currentUtterance = new SpeechSynthesisUtterance(text);
+      currentUtterance.lang = voiceLang;
+      currentUtterance.rate = 1.0;
+      currentUtterance.pitch = 1.0;
+      currentUtterance.volume = 1.0;
+
+      // Get appropriate voice
+      const voices = synth.getVoices();
+      addDebug(`Available voices: ${voices.length}`);
+      const preferredVoice = voices.find(v => v.lang.startsWith(voiceLang.split('-')[0]));
+      if (preferredVoice) {
+        currentUtterance.voice = preferredVoice;
+        addDebug(`Using voice: ${preferredVoice.name}`);
+      } else {
+        addDebug('No preferred voice found');
+      }
+
+      currentUtterance.onstart = () => {
+        addDebug('Speech started');
+        status.textContent = 'Speaking...';
+      };
+
+      currentUtterance.onend = () => {
+        addDebug('Speech ended');
+        status.textContent = 'AI Meeting Assistant';
+        message.textContent = 'Listening...';
+      };
+
+      currentUtterance.onerror = (error) => {
+        addDebug(`Speech error: ${error.error}`);
+        console.error('Speech synthesis error:', error);
+        status.textContent = 'Error';
+      };
+
+      message.textContent = text;
+      addDebug('Calling synth.speak()');
+      synth.speak(currentUtterance);
+    }
+
+    // Load voices (required for some browsers)
+    if (synth.onvoiceschanged !== undefined) {
+      synth.onvoiceschanged = () => {
+        addDebug(`Voices loaded: ${synth.getVoices().length}`);
+        console.log('Voices loaded:', synth.getVoices().length);
+      };
+    }
+
+    let lastMessage = '';
+    let pollCount = 0;
+
+    // Poll for new messages to speak
+    async function pollForMessages() {
+      if (!botId) {
+        message.textContent = 'No bot ID provided';
+        addDebug('ERROR: No bot ID provided');
+        return;
+      }
+
+      try {
+        pollCount++;
+        addDebug(`Starting poll #${pollCount}...`);
+        const response = await fetch(`${serverUrl}/bot-speech/${botId}`);
+        addDebug(`Poll #${pollCount}: Response status ${response.status}`);
+
+        if (response.ok) {
+          const data = await response.json();
+          const msgPreview = data.message ? data.message.substring(0, 30) : '(empty)';
+          addDebug(`Poll #${pollCount}: Got message: "${msgPreview}..."`);
+
+          if (data.message && data.message !== lastMessage) {
+            addDebug('New message detected, calling speak()');
+            lastMessage = data.message;
+            speak(data.message);
+          } else {
+            addDebug(`Poll #${pollCount}: No new message (same as last)`);
+          }
+        } else {
+          addDebug(`Poll #${pollCount}: HTTP ${response.status}`);
+        }
+      } catch (error) {
+        addDebug(`Poll #${pollCount}: ERROR - ${error.message}`);
+        console.error('Failed to fetch message:', error);
+      }
+
+      // Poll every 2 seconds (reduced from 500ms for debugging)
+      setTimeout(pollForMessages, 2000);
+    }
+
+    // WebSocket connection for real-time messages
+    function connectWebSocket() {
+      if (!botId) return;
+
+      addDebug('Attempting WebSocket connection...');
+      const ws = new WebSocket(`${serverUrl.replace('http', 'ws')}/bot-speech-ws/${botId}`);
+
+      ws.onopen = () => {
+        addDebug('WebSocket connected');
+        console.log('WebSocket connected');
+        status.textContent = 'Connected';
+      };
+
+      ws.onmessage = (event) => {
+        addDebug('WebSocket message received');
+        const data = JSON.parse(event.data);
+        if (data.message) {
+          speak(data.message);
+        }
+      };
+
+      ws.onerror = (error) => {
+        addDebug('WebSocket error, falling back to polling');
+        console.error('WebSocket error:', error);
+        // Fallback to polling
+        pollForMessages();
+      };
+
+      ws.onclose = () => {
+        addDebug('WebSocket closed, using polling');
+        console.log('WebSocket closed, using polling');
+        pollForMessages();
+      };
+    }
+
+    // Try WebSocket first, fallback to polling
+    connectWebSocket();
+
+    // Test speech on load
+    window.addEventListener('load', () => {
+      addDebug('Page loaded');
+      setTimeout(() => {
+        const voiceCount = synth.getVoices().length;
+        addDebug(`Speech synthesis ready, ${voiceCount} voices available`);
+        if (voiceCount > 0) {
+          console.log('Speech synthesis ready');
+        }
+      }, 100);
+    });
+  </script>
+</body>
+</html>

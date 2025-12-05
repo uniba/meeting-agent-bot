@@ -89,7 +89,7 @@ export class MeetingAgent extends EventEmitter {
 
   }
 
-  async joinMeeting(meetingUrl: string, botName?: string): Promise<string> {
+  async joinMeeting(meetingUrl: string, botName?: string, outputMediaUrl?: string): Promise<string> {
     try {
       const bot = await this.recallClient.createBot({
         meetingUrl,
@@ -97,12 +97,16 @@ export class MeetingAgent extends EventEmitter {
         transcriptionOptions: {
           language: 'ja'
         },
-        webhookUrl: this.config.webhookUrl
+        webhookUrl: this.config.webhookUrl,
+        outputMediaUrl
       });
 
       this.activeBots.set(bot.id, bot);
       console.log(`Bot created with ID: ${bot.id}`);
       console.log(`Transcripts will be received via webhook: ${this.config.webhookUrl}`);
+      if (outputMediaUrl) {
+        console.log(`Output media URL: ${outputMediaUrl}`);
+      }
 
       return bot.id;
     } catch (error) {

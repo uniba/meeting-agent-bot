@@ -9,6 +9,7 @@ export interface BotConfig {
     language?: string;
   };
   webhookUrl: string;
+  outputMediaUrl?: string;
 }
 
 export interface Bot {
@@ -71,6 +72,18 @@ export class RecallClient extends EventEmitter {
           ]
         }
       };
+
+      // Add output_media if URL is provided
+      if (config.outputMediaUrl) {
+        requestData.output_media = {
+          camera: {
+            kind: 'webpage',
+            config: {
+              url: config.outputMediaUrl
+            }
+          }
+        };
+      }
 
       console.log('Creating bot with recallai_streaming transcript provider');
       console.log('Webhook URL:', config.webhookUrl);

@@ -7,6 +7,7 @@ dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
+app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
@@ -26,12 +27,17 @@ const agentConfig: MeetingAgentConfig = {
 
 const meetingAgent = new MeetingAgent(agentConfig);
 
+// Storage for bot speech messages
+const botSpeechMessages: Map<string, string> = new Map();
+
 meetingAgent.on('transcript', (data) => {
   console.log(`[${data.speaker}]: ${data.text}`);
 });
 
 meetingAgent.on('message_sent', (data) => {
   console.log(`[Bot Message]: ${data.message}`);
+  // Store message for speech output
+  botSpeechMessages.set(data.botId, data.message);
 });
 
 meetingAgent.on('meeting_summary', (data) => {
@@ -69,24 +75,36 @@ app.post('/webhook', (req, res) => {
 });
 
 app.post('/join-meeting', async (req, res) => {
-  const { meetingUrl, botName } = req.body;
+  const { meetingUrl, botName, enableSpeech } = req.body;
 
   if (!meetingUrl) {
     return res.status(400).json({ error: 'Meeting URL is required' });
   }
 
   try {
-    const botId = await meetingAgent.joinMeeting(meetingUrl, botName);
-    res.json({ 
-      success: true, 
+    let outputMediaUrl;
+
+    // Generate output media URL if speech is enabled
+    if (enableSpeech) {
+      const webhookDomain = process.env.WEBHOOK_URL?.split('/webhook')[0] || `http://localhost:${PORT}`;
+      // The HTML page will extract botId from URL hash after page loads
+      outputMediaUrl = `${webhookDomain}/bot-speaker.html?server=${encodeURIComponent(webhookDomain)}`;
+    }
+
+    const botId = await meetingAgent.joinMeeting(meetingUrl, botName, outputMediaUrl);
+
+    res.json({
+      success: true,
       botId,
-      message: 'Bot successfully joined the meeting' 
+      message: 'Bot successfully joined the meeting',
+      speechEnabled: !!enableSpeech,
+      speakerUrl: enableSpeech ? `${outputMediaUrl}#${botId}` : undefined
     });
   } catch (error: any) {
     console.error('Failed to join meeting:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to join meeting',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -194,8 +212,19 @@ app.put('/update-persona', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/bot-speech/:botId', (req, res) => {
+  const { botId } = req.params;
+  const message = botSpeechMessages.get(botId) || '';
+
+  res.json({
+    botId,
+    message,
     timestamp: new Date().toISOString()
   });
 });
