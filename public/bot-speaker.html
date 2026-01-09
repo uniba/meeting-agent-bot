@@ -64,6 +64,7 @@
     <div class="status" id="status">AI Meeting Assistant</div>
     <div class="message" id="message">Listening...</div>
     <div class="debug" id="debug"></div>
+    <audio id="audio" style="display: none;"></audio>
   </div>
 
   <script>
@@ -80,6 +81,7 @@
     const status = document.getElementById('status');
     const message = document.getElementById('message');
     const debugDiv = document.getElementById('debug');
+    const audioElement = document.getElementById('audio');
 
     // Debug logging
     function addDebug(msg) {
@@ -95,67 +97,39 @@
     addDebug(`Bot ID: ${botId}`);
     addDebug(`Server URL: ${serverUrl}`);
 
-    let synth = window.speechSynthesis;
-    let currentUtterance = null;
+    let lastAudioUrl = '';
 
-    function speak(text, lang = 'en-US') {
-      addDebug(`speak() called with: "${text.substring(0, 50)}..."`);
+    function playAudio(audioUrl, text) {
+      addDebug(`playAudio() called with URL: ${audioUrl}`);
 
-      // Cancel any ongoing speech
-      if (synth.speaking) {
-        addDebug('Cancelling ongoing speech');
-        synth.cancel();
-      }
+      message.textContent = text;
+      status.textContent = 'Speaking...';
 
-      // Detect if text is Japanese
-      const isJapanese = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text);
-      const voiceLang = isJapanese ? 'ja-JP' : 'en-US';
-      addDebug(`Detected language: ${voiceLang}`);
+      audioElement.src = audioUrl;
+      audioElement.load();
 
-      currentUtterance = new SpeechSynthesisUtterance(text);
-      currentUtterance.lang = voiceLang;
-      currentUtterance.rate = 1.0;
-      currentUtterance.pitch = 1.0;
-      currentUtterance.volume = 1.0;
-
-      // Get appropriate voice
-      const voices = synth.getVoices();
-      addDebug(`Available voices: ${voices.length}`);
-      const preferredVoice = voices.find(v => v.lang.startsWith(voiceLang.split('-')[0]));
-      if (preferredVoice) {
-        currentUtterance.voice = preferredVoice;
-        addDebug(`Using voice: ${preferredVoice.name}`);
-      } else {
-        addDebug('No preferred voice found');
-      }
-
-      currentUtterance.onstart = () => {
-        addDebug('Speech started');
-        status.textContent = 'Speaking...';
+      audioElement.onloadeddata = () => {
+        addDebug('Audio loaded, starting playback');
+        audioElement.play().then(() => {
+          addDebug('Audio playback started');
+        }).catch(error => {
+          addDebug(`Audio playback error: ${error.message}`);
+        });
       };
 
-      currentUtterance.onend = () => {
-        addDebug('Speech ended');
+      audioElement.onplay = () => {
+        addDebug('Audio playing');
+      };
+
+      audioElement.onended = () => {
+        addDebug('Audio playback ended');
         status.textContent = 'AI Meeting Assistant';
         message.textContent = 'Listening...';
       };
 
-      currentUtterance.onerror = (error) => {
-        addDebug(`Speech error: ${error.error}`);
-        console.error('Speech synthesis error:', error);
+      audioElement.onerror = (error) => {
+        addDebug(`Audio error: ${audioElement.error?.message || 'Unknown error'}`);
         status.textContent = 'Error';
-      };
-
-      message.textContent = text;
-      addDebug('Calling synth.speak()');
-      synth.speak(currentUtterance);
-    }
-
-    // Load voices (required for some browsers)
-    if (synth.onvoiceschanged !== undefined) {
-      synth.onvoiceschanged = () => {
-        addDebug(`Voices loaded: ${synth.getVoices().length}`);
-        console.log('Voices loaded:', synth.getVoices().length);
       };
     }
 
@@ -172,27 +146,26 @@
 
       try {
         pollCount++;
-        addDebug(`Starting poll #${pollCount}...`);
-        const response = await fetch(`${serverUrl}/bot-speech/${botId}`);
-        addDebug(`Poll #${pollCount}: Response status ${response.status}`);
+        const response = await fetch(`${serverUrl}/bot-speech-data/${botId}`);
 
         if (response.ok) {
           const data = await response.json();
-          const msgPreview = data.message ? data.message.substring(0, 30) : '(empty)';
-          addDebug(`Poll #${pollCount}: Got message: "${msgPreview}..."`);
 
-          if (data.message && data.message !== lastMessage) {
-            addDebug('New message detected, calling speak()');
+          if (data.audioUrl && data.audioUrl !== lastAudioUrl) {
+            addDebug(`Poll #${pollCount}: New audio detected!`);
+            const msgPreview = data.message ? data.message.substring(0, 50) : '(no message)';
+            addDebug(`Message: "${msgPreview}..."`);
+            addDebug(`Audio URL: ${data.audioUrl}`);
+            lastAudioUrl = data.audioUrl;
             lastMessage = data.message;
-            speak(data.message);
-          } else {
-            addDebug(`Poll #${pollCount}: No new message (same as last)`);
+            playAudio(serverUrl + data.audioUrl, data.message);
           }
+          // Don't log when there's no new message to reduce clutter
         } else {
-          addDebug(`Poll #${pollCount}: HTTP ${response.status}`);
+          addDebug(`Poll #${pollCount}: HTTP ERROR ${response.status}`);
         }
       } catch (error) {
-        addDebug(`Poll #${pollCount}: ERROR - ${error.message}`);
+        addDebug(`Poll #${pollCount}: FETCH ERROR - ${error.message}`);
         console.error('Failed to fetch message:', error);
       }
 
@@ -216,8 +189,8 @@
       ws.onmessage = (event) => {
         addDebug('WebSocket message received');
         const data = JSON.parse(event.data);
-        if (data.message) {
-          speak(data.message);
+        if (data.audioUrl) {
+          playAudio(serverUrl + data.audioUrl, data.message);
         }
       };
 
@@ -238,16 +211,9 @@
     // Try WebSocket first, fallback to polling
     connectWebSocket();
 
-    // Test speech on load
+    // Log when page is loaded
     window.addEventListener('load', () => {
-      addDebug('Page loaded');
-      setTimeout(() => {
-        const voiceCount = synth.getVoices().length;
-        addDebug(`Speech synthesis ready, ${voiceCount} voices available`);
-        if (voiceCount > 0) {
-          console.log('Speech synthesis ready');
-        }
-      }, 100);
+      addDebug('Page loaded, ready to receive audio');
     });
   </script>
 </body>

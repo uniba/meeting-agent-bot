@@ -12,3 +12,4 @@ npm-debug.log*
 *.swo
 *~
 package-lock.json
+public/audio/

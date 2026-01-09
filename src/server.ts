@@ -2,6 +2,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import { MeetingAgent, MeetingAgentConfig } from './services/meeting-agent';
+import { TTSService } from './services/tts-service';
 
 dotenv.config();
 
@@ -26,18 +27,42 @@ const agentConfig: MeetingAgentConfig = {
 };
 
 const meetingAgent = new MeetingAgent(agentConfig);
+const ttsService = new TTSService(process.env.OPENAI_API_KEY!);
 
 // Storage for bot speech messages
 const botSpeechMessages: Map<string, string> = new Map();
+// Storage for bot audio URLs
+const botAudioUrls: Map<string, string> = new Map();
+// Map session IDs to bot IDs
+const sessionToBotId: Map<string, string> = new Map();
 
 meetingAgent.on('transcript', (data) => {
   console.log(`[${data.speaker}]: ${data.text}`);
 });
 
-meetingAgent.on('message_sent', (data) => {
+meetingAgent.on('message_sent', async (data) => {
   console.log(`[Bot Message]: ${data.message}`);
   // Store message for speech output
   botSpeechMessages.set(data.botId, data.message);
+
+  // Generate audio file for this message
+  try {
+    const audioId = `${data.botId}-${Date.now()}`;
+    const audioUrl = await ttsService.generateSpeech(data.message, audioId);
+    botAudioUrls.set(data.botId, audioUrl);
+    console.log(`Generated audio: ${audioUrl}`);
+
+    // Also store for the session ID if it exists
+    for (const [sessionId, botId] of sessionToBotId.entries()) {
+      if (botId === data.botId) {
+        botSpeechMessages.set(sessionId, data.message);
+        botAudioUrls.set(sessionId, audioUrl);
+        console.log(`Also stored message and audio for session ${sessionId}`);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to generate audio:', error);
+  }
 });
 
 meetingAgent.on('meeting_summary', (data) => {
@@ -85,20 +110,32 @@ app.post('/join-meeting', async (req, res) => {
     let outputMediaUrl;
 
     // Generate output media URL if speech is enabled
+    // Use a temporary session ID that will map to the actual bot ID
     if (enableSpeech) {
       const webhookDomain = process.env.WEBHOOK_URL?.split('/webhook')[0] || `http://localhost:${PORT}`;
-      // The HTML page will extract botId from URL hash after page loads
-      outputMediaUrl = `${webhookDomain}/bot-speaker.html?server=${encodeURIComponent(webhookDomain)}`;
+      const sessionId = Date.now().toString();
+      outputMediaUrl = `${webhookDomain}/bot-speaker/${sessionId}?server=${encodeURIComponent(webhookDomain)}`;
     }
 
     const botId = await meetingAgent.joinMeeting(meetingUrl, botName, outputMediaUrl);
+
+    // Map session ID to bot ID if speech is enabled
+    if (enableSpeech && outputMediaUrl) {
+      const sessionId = outputMediaUrl.match(/bot-speaker\/([^?]+)/)?.[1];
+      if (sessionId) {
+        sessionToBotId.set(sessionId, botId);
+        botSpeechMessages.set(sessionId, ''); // Register session
+        botSpeechMessages.set(botId, ''); // Also register the actual botId
+        console.log(`Mapped session ${sessionId} to bot ${botId}`);
+      }
+    }
 
     res.json({
       success: true,
       botId,
       message: 'Bot successfully joined the meeting',
       speechEnabled: !!enableSpeech,
-      speakerUrl: enableSpeech ? `${outputMediaUrl}#${botId}` : undefined
+      speakerUrl: outputMediaUrl
     });
   } catch (error: any) {
     console.error('Failed to join meeting:', error);
@@ -218,13 +255,34 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/bot-speech/:botId', (req, res) => {
+// Serve bot speaker HTML page with botId embedded
+app.get('/bot-speaker/:botId', (req, res) => {
+  const { botId } = req.params;
+
+  // Read the HTML file and inject botId
+  const fs = require('fs');
+  const path = require('path');
+  let html = fs.readFileSync(path.join(__dirname, '../public/bot-speaker.html'), 'utf8');
+
+  // Replace the botId extraction code with a hardcoded botId
+  html = html.replace(
+    /let botId = window\.location\.hash\.substring\(1\);[\s\S]*?const serverUrl/,
+    `let botId = '${botId}';\n    const serverUrl`
+  );
+
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
+app.get('/bot-speech-data/:botId', (req, res) => {
   const { botId } = req.params;
   const message = botSpeechMessages.get(botId) || '';
+  const audioUrl = botAudioUrls.get(botId) || '';
 
   res.json({
     botId,
     message,
+    audioUrl,
     timestamp: new Date().toISOString()
   });
 });
